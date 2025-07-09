@@ -1,16 +1,14 @@
 /**
  * TODO
  * 
- * 1. Fix warnings on rotation functions usage and other stuff
- * 
- * 2. Find an workaround to find why Earth and Satellite no longer show even if added to the scene
+ * 1. Find an workaround to find why Earth and Satellite no longer show even if added to the scene
  *    (Changing camera and constants as an initial troubleshooting step may help?)
  * 
- * 3. Test if forces are being applied just fine in the scene
- * 4. Adjust any details before going with UI
- * 5. Implement UI (With ability to add arbitary number of satellites)
- * 6. Shall then camera perspective changed to orthographic for better control?
- * 7. More polishes if needed
+ * 2. Test if forces are being applied just fine in the scene
+ * 3. Adjust any details before going with UI
+ * 4. Implement UI (With ability to add arbitary number of satellites)
+ * 5. Shall then camera perspective changed to orthographic for better control?
+ * 6. More polishes if needed
  * 
  */
 
@@ -31,7 +29,7 @@ const SCALE_HEIGHT = 8500; // m (atmospheric scale height)
 
 class Object {
   position = new THREE.Vector3(0, 0, 0);
-  rotation = new THREE.Vector3(0, 0, 0);
+  rotation = new THREE.Euler(0, 0, 0, 'XYZ');
   scale = new THREE.Vector3(1, 1, 1);
   velocity = new THREE.Vector3(0, 0, 0);
   previousAcceleration = new THREE.Vector3(0, 0, 0);
@@ -123,8 +121,7 @@ class Object {
   }
 }
 
-
-; (function () {
+;(function () {
   /* used to dumb childrens of the loaded model (useful for debugging...) */
   function dumpObject(obj, lines = [], isLast = true, prefix = '') {
     const localPrefix = isLast ? '└─' : '├─';
@@ -246,15 +243,11 @@ class Object {
     return r.normalize().multiplyScalar(G * body1.mass * body2.mass / (distance * distance));
   }
 
-  /* FIXME THREE.js keep warning about rotation function usage for some weird reason... */
-  const earthRotationVector = new THREE.Vector3(0, 1, 0).normalize();
-
   function updateEarth(dt) {
     if (earth.model) {
       earth.model.rotateY(7.292115e-5 * dt);
     }
   }
-
   
   function updateSatellite(dt) {
     const gravity = calculateGravity(earth, satellite);
