@@ -274,7 +274,6 @@ class Object {
       satellite.model.quaternion.setFromRotationMatrix(rotationMatrix);
       
       // If model's forward is Z-axis, rotate 90 degrees on X
-      /* FIXME THREE.js keep warning about rotation function usage for some weird reason... */
       satellite.model.rotateX(Math.PI/2); 
     }
   }
