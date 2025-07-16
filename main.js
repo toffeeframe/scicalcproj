@@ -10,10 +10,11 @@
  * 
  * TODO
  * 
- * 1. fix objects movement (weirdo satellite problem)
- * 2. implement UI and ability to control things through it
- * 3. cleanup code
- * 4. finalize any other steps
+ * 1. fix cloning
+ * 2. fix objects movement (weirdo satellite problem)
+ * 3. implement rest of UI
+ * 4. cleanup code
+ * 5. finalize any other steps
  */
 
 import * as THREE from 'three';
@@ -62,6 +63,9 @@ class SimulationObject {
   mass = 0;
   isModelLoaded = false;
   isInScene = false;
+  enableForces = true;
+  enableGravity = true;
+  enableAirDrag = true;
   model = null;
   name = "(unnamed)";
   type = OBJECT_TYPE_NONE;
@@ -113,7 +117,19 @@ class SimulationObject {
     }
   }
 
+  /*
+  toggleExistenceInScene(scene) {
+    if (!this.isInScene) {
+      this.addToScene(scene);
+    } else {
+      this.removeFromScene(scene);
+    }
+  }
+    */
+
   updatePhysics(dt, acceleration) {
+    if (!this.enableForces) return;
+
     // Verlet integration
     const newPosition = this.position.clone()
       .add(this.velocity.clone().multiplyScalar(dt))
@@ -160,6 +176,7 @@ class SimulationObject {
     clonedObj.model.scale.copy(this.model.scale);
     clonedObj.isModelLoaded = this.isModelLoaded;
     clonedObj.isInScene = this.isInScene;
+    clonedObj.enableForces = this.enableForces;
 
     return clonedObj;
   }
@@ -220,9 +237,9 @@ class SimulationObject {
 
   /* we would apply gravity and air drag forces on the satellite */
   function updateSatellite(satObj, earthObj, dt) {
-    const gravity = calculateGravity(earthObj, satObj);
-    const airDrag = calculateAirDrag(satObj);
-
+    let gravity = (satObj.enableGravity ? calculateGravity(earthObj, satObj) : THREE.Vector3(0));
+    let airDrag = (satObj.enableAirDrag ? calculateAirDrag(satObj) : THREE.Vector3(0));
+    
     const totalForce = gravity.add(airDrag);
     const acceleration = totalForce.divideScalar(satObj.mass);
 
@@ -301,6 +318,8 @@ class SimulationObject {
   const earthTemplateObject = new SimulationObject("EarthTemplate", OBJECT_TYPE_EARTH);
   earthTemplateObject.setScale(0.5, 0.5, 0.5);
   earthTemplateObject.mass = EARTH_MASS;
+  
+  /* TODO smth wrong with initial settings of satellite? (need to figure out that to fix movement) */
 
   const satelliteTemplateObject = new SimulationObject("SatelliteTemplate", OBJECT_TYPE_SATELLITE);
   satelliteTemplateObject.setScale(2, 2, 2);
@@ -356,12 +375,12 @@ class SimulationObject {
         }
       );
     })
-      .then((result) => { return earthTemplateObject.loadModel("assets/models/Earth.glb"); })
-      .then((result) => { return satelliteTemplateObject.loadModel("assets/models/Satellite2.glb"); })
-      .catch((error) => console.error(error));
+    .then((result) => { return earthTemplateObject.loadModel("assets/models/Earth.glb"); })
+    .then((result) => { return satelliteTemplateObject.loadModel("assets/models/Satellite2.glb"); })
+    .catch((error) => console.error(error));
   }
 
-  /* TODO add focus and ability to control the objects (after implementing UI) */
+  /* TODO fix cloning and implement rest of UI */
   function addObject(type) {
     let pushedObject = null;
 
@@ -383,32 +402,103 @@ class SimulationObject {
       console.log(pushedObject);
     }
 
-    /* TODO make a choice to delete the object if wanted (from it's folder) */
-    pushedObject.addToScene(scene);
+    /* P.S bad ternary op usage? (it's fine though) */
+    if (pushedObject === null) {
+      console.error(
+        "failed to push a new " +
+        ((type === OBJECT_TYPE_EARTH)
+        ? "Earth"
+        : ((type === OBJECT_TYPE_SATELLITE) ? "Satellite" : "None"))
+      );
+    }
 
-    /* TODO implement UI functions */
+    /* TODO fix cloning and make a choice to delete the object if wanted (from it's folder) */
+    pushedObject.addToScene(scene);
+    
     let pushedObjectFolder = simulationObjectsFolder.addFolder(pushedObject.name + " (ID : " + pushedObject.id + ")");
 
-    /* TODO this has to do with addition/deletion of objects */
-    pushedObjectFolder.add(pushedObject, 'isInScene').name("");
+    /* TODO fix cloning */
+    pushedObjectFolder
+      .add(pushedObject, 'isInScene')
+      .name("In Scene")
+      .onChange(function(value) {
+        console.log(scene);
+        dumpObject(scene);
 
-    /* TODO modify SimulationObject to add ability to control forces (modify, enable, disable) */
-    pushedObjectFolder.add(pushedObject, 'mass').name("Mass (kg)");
+        if (value === true) {
+          pushedObject.addToScene(scene);
+        } else {
+          pushedObject.removeFromScene(scene);
+        }
+      });
+      
+    let pushedObjectPhysics = pushedObjectFolder.addFolder("Physics");
+
+    pushedObjectPhysics.add(pushedObject, 'mass').name("Mass (kg)");
+    pushedObjectPhysics.add(pushedObject, 'enableForces').name("Enable Forces");
+
+    if (pushedObject.type === OBJECT_TYPE_SATELLITE) {
+      let gravityForce = pushedObjectPhysics.addFolder("Gravity");
+      gravityForce.add(pushedObject, 'enableGravity').name("Enable");
+
+      /* TODO add ability to modify air drag force properties */
+      let airDragForce = pushedObjectPhysics.addFolder("Air Drag");
+      airDragForce.add(pushedObject, 'enableAirDrag').name("Enable");
+    }
     
     let pushedObjectPositionFolder = pushedObjectFolder.addFolder("Position");
-    pushedObjectPositionFolder.add(pushedObject.position, 'x').name("X").onChange(function() {});
-    pushedObjectPositionFolder.add(pushedObject.position, 'y').name("Y").onChange(function() {});
-    pushedObjectPositionFolder.add(pushedObject.position, 'z').name("Z").onChange(function() {});
+    
+    pushedObjectPositionFolder
+      .add(pushedObject.position, 'x')
+      .name("X")
+      .onChange(function(newPosX) {
+        pushedObject.setPosition(newPosX, pushedObject.position.y, pushedObject.position.z);
+      });
+    
+    pushedObjectPositionFolder
+      .add(pushedObject.position, 'y')
+      .name("Y")
+      .onChange(function(newPosY) {
+        pushedObject.setPosition(pushedObject.position.x, newPosY, pushedObject.position.z);
+      });
 
+    pushedObjectPositionFolder
+      .add(pushedObject.position, 'z')
+      .name("Z")
+      .onChange(function(newPosZ) {
+        pushedObject.setPosition(pushedObject.position.x, pushedObject.position.x, newPosZ);
+      });
+
+    /* we ain't implement this for now since we didn't provide a setRotation function for SimulationObject */
+    /*
     let pushedObjectRotationFolder = pushedObjectFolder.addFolder("Rotation");
-    pushedObjectRotationFolder.add(pushedObject.rotation, 'x').name("X").onChange(function() {});
-    pushedObjectRotationFolder.add(pushedObject.rotation, 'y').name("Y").onChange(function() {});
-    pushedObjectRotationFolder.add(pushedObject.rotation, 'z').name("Z").onChange(function() {});
+    pushedObjectRotationFolder.add(pushedObject.rotation, 'x').name("X").onChange(function(newRotationX) {});
+    pushedObjectRotationFolder.add(pushedObject.rotation, 'y').name("Y").onChange(function(newRotationY) {});
+    pushedObjectRotationFolder.add(pushedObject.rotation, 'z').name("Z").onChange(function(newRotationZ) {});
+    */
 
     let pushedObjectScaleFolder = pushedObjectFolder.addFolder("Scale");
-    pushedObjectScaleFolder.add(pushedObject.scale, 'x').name("X").onChange(function() {});
-    pushedObjectScaleFolder.add(pushedObject.scale, 'y').name("Y").onChange(function() {});
-    pushedObjectScaleFolder.add(pushedObject.scale, 'z').name("Z").onChange(function() {});
+
+    pushedObjectScaleFolder
+      .add(pushedObject.scale, 'x')
+      .name("X")
+      .onChange(function(newScaleX) {
+        pushedObject.setScale(newScaleX, pushedObject.scale.y, pushedObject.scale.z);
+      });
+
+    pushedObjectScaleFolder
+      .add(pushedObject.scale, 'y')
+      .name("Y")
+      .onChange(function(newScaleY) {
+        pushedObject.setScale(pushedObject.scale.x, newScaleY, pushedObject.scale.z);
+      });
+    
+    pushedObjectScaleFolder
+      .add(pushedObject.scale, 'z')
+      .name("Z")
+      .onChange(function(newScaleZ) {
+        pushedObject.setScale(pushedObject.scale.x, pushedObject.scale.y, newScaleZ);
+      });
   }
 
   function update() {
@@ -420,16 +510,16 @@ class SimulationObject {
     stats.update();
   }
 
-  window.onresize = function () {
+  window.onresize = function() {
     const width = window.innerWidth, height = window.innerHeight;
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
   };
 
-  loadAssets().then((result) => {
+  loadAssets().then(function(result) {
     window.requestAnimationFrame(update);
-  }).catch((error) => {
+  }).catch(function(error) {
     console.error("Failed to launch project: \n" + error);
   });
 })();
