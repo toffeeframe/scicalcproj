@@ -1,33 +1,59 @@
 /**
  * TODO
  * 
- * 1. Find an workaround to find why Earth and Satellite no longer show even if added to the scene
- *    (Changing camera and constants as an initial troubleshooting step may help?)
+ * [x] Implement constants/imports
+ * [x] Implement SpaceObject class
+ * [x] Implement routines in IIFE
+ * [o] Implement simulation logic (things are asynchronous?)
+ * [o] Implement UI
+ * [o] Implement dynamic satellites (TODO fix movement)
  * 
- * 2. Test if forces are being applied just fine in the scene
- * 3. Adjust any details before going with UI
- * 4. Implement UI (With ability to add arbitary number of satellites)
- * 5. Shall then camera perspective changed to orthographic for better control?
- * 6. More polishes if needed
+ * TODO
  * 
+ * 1. fix objects movement (weirdo satellite problem)
+ * 2. implement UI and ability to control things through it
+ * 3. cleanup code
+ * 4. finalize any other steps
  */
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
+import GUI from 'lil-gui';
 
-const G = 6.67430e-11;
-const EARTH_MASS = 5.972e24;
-const EARTH_RADIUS = 6.371e6;
-const INIT_ALTITUDE = 500e3;
-const VISUAL_SCALE = 1e8;
+/* ===== Constants ===== */
 
-// Air density parameters (approximate values for Earth's atmosphere)
-const AIR_DENSITY_SEA_LEVEL = 1.225; // kg/m³
-const SCALE_HEIGHT = 8500; // m (atmospheric scale height)
+/* TODO pull some of them out of being global (SHOULD I?) */
 
-class Object {
+const G = 6.67430e-11,
+  EARTH_MASS = 5.972e24, /* in kg */
+  EARTH_RADIUS = 6.371e6,
+  SATELLITE_MASS = 1000, /* in kg */
+  INIT_ALTITUDE = 500e3,
+  VISUAL_SCALE = 1e5,    /* control scale of results */
+  TIME_STEP = 60,       /* timestep for physics update (6 secs), shall be removed? */
+
+  /* for atmosphere */
+  AIR_DENSITY_SEA_LEVEL = 1.225, /* in kg/m^3 */
+  SCALE_HEIGHT = 8500, /* in metres (m) */
+
+
+  simulationObjectTypes = ["None", "Earth", "Satellite"],
+  OBJECT_TYPE_NONE = 0,
+  OBJECT_TYPE_EARTH = 1,
+  OBJECT_TYPE_SATELLITE = 2;
+
+let simulationObjects = {
+  earthPlanets: [],
+  satellites: []
+};
+
+/* ===== SimulationObject ===== */
+
+
+/* TODO link satellites with earth planets? */
+class SimulationObject {
   position = new THREE.Vector3(0, 0, 0);
   rotation = new THREE.Euler(0, 0, 0, 'XYZ');
   scale = new THREE.Vector3(1, 1, 1);
@@ -35,59 +61,60 @@ class Object {
   previousAcceleration = new THREE.Vector3(0, 0, 0);
   mass = 0;
   isModelLoaded = false;
-  isIntoScene = false;
+  isInScene = false;
   model = null;
+  name = "(unnamed)";
+  type = OBJECT_TYPE_NONE;
 
-  static ID = 0;
-  objectID = 0;
-  name = "(none)";
+  static nextId = 0;
+  id = SimulationObject.nextId++;
 
-  constructor() {
-    this.objectID = Object.ID++;
-    this.name = "Object" + this.objectID;
+  constructor(name = "", type = 0) {
+    this.name = name || `SimulationObject${this.id}`;
+    this.type = type;
   }
 
-  loadData(name, src) {
-    this.name = name;
-    const loader = new GLTFLoader();
-
-    loader.load(src,
-      (modelData) => {
-        this.model = modelData.scene;
-        this.model.name = this.name;
-        this.model.position.copy(this.position);
-        this.model.rotation.copy(this.rotation);
-        this.model.scale.copy(this.scale);
-        this.isModelLoaded = true;
-
-        if (this.name === "Earth") {
-          this.model.scale.setScalar(EARTH_RADIUS / VISUAL_SCALE);
+  async loadModel(src) {
+    return new Promise((resolve, reject) => {
+      const loader = new GLTFLoader();
+      loader.load(
+        src,
+        (gltf) => {
+          this.model = gltf.scene;
+          this.model.name = this.name;
+          this.model.position.copy(this.position.clone().divideScalar(VISUAL_SCALE));
+          this.model.rotation.copy(this.rotation);
+          this.model.scale.copy(this.scale);
+          this.isModelLoaded = true;
+          resolve(this);
+        },
+        (progress) => {
+          console.log(`Loading ${this.name}: ${(progress.loaded / progress.total * 100).toFixed(1)}%`);
+        },
+        (error) => {
+          console.error(`Failed to load ${this.name}:`, error);
+          reject(error);
         }
-      },
-      (loadProgress) => {
-        console.log(`Loading "${src}" (${(loadProgress.loaded / loadProgress.total * 100).toFixed(1)}%)`);
-      },
-      (error) => {
-        console.error(`Failed to load "${src}":`, error);
-      }
-    );
+      );
+    });
   }
 
   addToScene(scene) {
-    if (this.model && !this.isIntoScene) {
-      this.isIntoScene = true;
+    if (this.model && !this.isInScene) {
       scene.add(this.model);
+      this.isInScene = true;
     }
   }
 
   removeFromScene(scene) {
-    if (this.model && this.isIntoScene) {
+    if (this.model && this.isInScene) {
       scene.remove(this.model);
-      this.isIntoScene = false;
+      this.isInScene = false;
     }
   }
 
   updatePhysics(dt, acceleration) {
+    // Verlet integration
     const newPosition = this.position.clone()
       .add(this.velocity.clone().multiplyScalar(dt))
       .add(this.previousAcceleration.clone().multiplyScalar(0.5 * dt * dt));
@@ -99,30 +126,47 @@ class Object {
     this.position.copy(newPosition);
     this.velocity.copy(newVelocity);
 
-    if (this.model) {
+    if (this.model)
       this.model.position.copy(this.position.clone().divideScalar(VISUAL_SCALE));
-    }
   }
 
   setPosition(x, y, z) {
     this.position.set(x, y, z);
 
-    if (this.model !== null) {
-      this.model.position.copy(this.position);
-    }
+    if (this.model)
+      this.model.position.copy(this.position.clone().divideScalar(VISUAL_SCALE));
   }
-  
+
   setScale(x, y, z) {
     this.scale.set(x, y, z);
 
-    if (this.model !== null) {
-      this.model.scale.copy(x, y, z);
-    }
+    if (this.model)
+      this.model.scale.copy(this.scale);
+  }
+
+  /* TODO can this function implemented in better way? */
+  clone() {
+    let clonedObj = new SimulationObject(this.name, this.type);
+
+    clonedObj.position.copy(this.position);
+    clonedObj.rotation.copy(this.rotation);
+    clonedObj.scale.copy(this.scale);
+    clonedObj.velocity.copy(this.velocity);
+    clonedObj.previousAcceleration.copy(this.previousAcceleration);
+    clonedObj.mass = this.mass;
+    clonedObj.model = this.model;
+    clonedObj.model.position.copy(this.model.position);
+    clonedObj.model.rotation.copy(this.model.rotation);
+    clonedObj.model.scale.copy(this.model.scale);
+    clonedObj.isModelLoaded = this.isModelLoaded;
+    clonedObj.isInScene = this.isInScene;
+
+    return clonedObj;
   }
 }
 
-;(function () {
-  /* used to dumb childrens of the loaded model (useful for debugging...) */
+; (function () {
+  /* [DEBUG] used to dumb childrens of the loaded model */
   function dumpObject(obj, lines = [], isLast = true, prefix = '') {
     const localPrefix = isLast ? '└─' : '├─';
     lines.push(`${prefix}${prefix ? localPrefix : ''}${obj.name || '(unnamed)'} [${obj.type}]`);
@@ -137,99 +181,23 @@ class Object {
     return lines;
   }
 
-  let stats = new Stats();
-  stats.showPanel(0);
-  document.body.appendChild(stats.dom);
+  function calculateAirDrag(satObj, options = null) {
+    const altitude = satObj.position.length() - EARTH_RADIUS;
+    if (altitude < 0) return new THREE.Vector3(0, 0, 0);
 
-  const scene = new THREE.Scene();
-  scene.name = "Scene";
+    let dragCoefficient = ((options !== null && typeof options.dragCoefficient === "number") ? options.dragCoefficient : 2.2),
+        crossSectionArea = ((options !== null && typeof options.crossSectionArea === "number") ? options.crossSectionArea : 10),
+        airDensitySeaLevel = ((options !== null && typeof options.airDensitySeaLevel === "number") ? options.airDensitySeaLevel : AIR_DENSITY_SEA_LEVEL),
+        scaleHeight = ((options !== null && typeof options.scaleHeight === "number") ? options.scaleHeight : SCALE_HEIGHT);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
+    const airDensity = airDensitySeaLevel * Math.exp(-altitude / scaleHeight),
+          speed = satObj.velocity.length();
 
-  /**
-   * Skybox Generator:
-   * 
-   * https://tools.wwwtyro.net/space-3d/index.html
-   */
-  const skyboxLoader = new THREE.CubeTextureLoader();
-
-  skyboxLoader.load(
-    [
-      /* positive-x (right), negative-x (left) */
-      'assets/textures/skybox/right.png',
-      'assets/textures/skybox/left.png',
-
-      /* positive-y (top), negative-y (bottom) */
-      'assets/textures/skybox/top.png',
-      'assets/textures/skybox/bottom.png',
-
-      /* positive-z (front), negative-z (back) */
-      'assets/textures/skybox/front.png',
-      'assets/textures/skybox/back.png',
-    ],
-    function (skyboxTexture) {
-      scene.background = skyboxTexture;
-    },
-    function (loadProgress) {
-      console.log('loading skybox (%' + (loadProgress.loaded / loadProgress.total * 100) + ')');
-    },
-    function (error) {
-      console.error('failed to load skybox');
-      console.error(error);
-    }
-  );
-
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(0, 0, (EARTH_RADIUS * 3) / VISUAL_SCALE);
-  camera.lookAt(0, 0, 0);
-
-  let earth = new Object();
-  earth.mass = EARTH_MASS;
-  earth.setScale(0.5, 0.5, 0.5);
-  earth.loadData("Earth", "assets/models/Earth.glb");
-  earth.addToScene(scene);
-
-  let satellite = new Object();
-  satellite.mass = 1000;
-  satellite.setScale(2, 2, 2);
-  satellite.setPosition(EARTH_RADIUS + INIT_ALTITUDE, 0, 0);
-  satellite.loadData("Satellite", "assets/models/Satellite2.glb");
-  satellite.addToScene(scene);
-  
-  const orbitalVelocity = Math.sqrt(G * EARTH_MASS / (EARTH_RADIUS + INIT_ALTITUDE));
-  satellite.velocity.set(0, orbitalVelocity, 0);
-
-  const light = new THREE.AmbientLight(0xFFFFFF);
-  light.name = "AmbientLight";
-  scene.add(light);
-
-  const controls = new FlyControls(camera, renderer.domElement);
-  controls.movementSpeed = 50;
-  controls.rollSpeed = 0.5;
-  
-  const clock = new THREE.Clock();
-
-  /* TODO check again if we need to mock the function */
-  function calculateAirDrag(satellite, earth) {
-    const altitude = satellite.position.length() - EARTH_RADIUS;
-    if (altitude < 0) return new THREE.Vector3(0, 0, 0); // Below surface
-    
-    // Calculate air density (exponential model)
-    const airDensity = AIR_DENSITY_SEA_LEVEL * Math.exp(-altitude / SCALE_HEIGHT);
-    
-    // Simple drag model (F = 0.5 * ρ * v² * Cd * A)
-    const dragCoefficient = 2.2; // Typical for satellites
-    const crossSectionArea = 10; // m² (approximate)
-    const speed = satellite.velocity.length();
-    
     if (speed === 0) return new THREE.Vector3(0, 0, 0);
-    
+
     const dragMagnitude = 0.5 * airDensity * speed * speed * dragCoefficient * crossSectionArea;
-    const dragDirection = satellite.velocity.clone().normalize().negate();
-    
-    return dragDirection.multiplyScalar(dragMagnitude);
+
+    return satObj.velocity.clone().normalize().negate().multiplyScalar(dragMagnitude);
   }
 
   /**
@@ -243,49 +211,209 @@ class Object {
     return r.normalize().multiplyScalar(G * body1.mass * body2.mass / (distance * distance));
   }
 
-  function updateEarth(dt) {
-    if (earth.model) {
-      earth.model.rotateY(7.292115e-5 * dt);
+  /* we ain't study applied forces on earth, so just do the daily spinning thing */
+  function updateEarth(earthObj, dt) {
+    if (earthObj.model) {
+      earthObj.model.rotateY(7.292115e-5 * dt);
     }
   }
-  
-  function updateSatellite(dt) {
-    const gravity = calculateGravity(earth, satellite);
-    const airDrag = calculateAirDrag(satellite, earth);
-    
+
+  /* we would apply gravity and air drag forces on the satellite */
+  function updateSatellite(satObj, earthObj, dt) {
+    const gravity = calculateGravity(earthObj, satObj);
+    const airDrag = calculateAirDrag(satObj);
+
     const totalForce = gravity.add(airDrag);
-    const acceleration = totalForce.divideScalar(satellite.mass);
-    
-    satellite.updatePhysics(dt, acceleration);
+    const acceleration = totalForce.divideScalar(satObj.mass);
+
+    satObj.updatePhysics(dt, acceleration);
 
     // Orient satellite to velocity
-    if (satellite.model && satellite.velocity.lengthSq() > 0.1) {
-      const currentPos = satellite.position.clone().divideScalar(VISUAL_SCALE);
-      const velocityDir = satellite.velocity.clone().normalize();
+    if (satObj.model && satObj.velocity.lengthSq() > 0.1) {
+      const currentPos = satObj.position.clone().divideScalar(VISUAL_SCALE);
+      const velocityDir = satObj.velocity.clone().normalize();
       const targetPos = currentPos.clone().add(velocityDir);
-      
+
       // Calculate up vector perpendicular to orbital plane
-      const radialVector = satellite.position.clone().normalize();
-      const upVector = radialVector.cross(satellite.velocity).normalize();
-      
+      const radialVector = satObj.position.clone().normalize();
+      const upVector = radialVector.cross(satObj.velocity).normalize();
+
       // Create and apply orientation matrix
       const rotationMatrix = new THREE.Matrix4();
       rotationMatrix.lookAt(currentPos, targetPos, upVector);
-      satellite.model.quaternion.setFromRotationMatrix(rotationMatrix);
-      
+      satObj.model.quaternion.setFromRotationMatrix(rotationMatrix);
+
       // If model's forward is Z-axis, rotate 90 degrees on X
-      satellite.model.rotateX(Math.PI/2); 
+      satObj.model.rotateX(Math.PI / 2);
     }
   }
 
+  /* TODO better fix nested-loop design by linking satellites with planets? */
   function updateObjects(dt) {
-    updateEarth(dt);
-    updateSatellite(dt);
+    simulationObjects.earthPlanets.forEach(earthPlanetObject => {
+      if (earthPlanetObject.isInScene) {
+        updateEarth(earthPlanetObject, dt);
+
+        simulationObjects.satellites.forEach(satelliteObject => {
+          if (satelliteObject.isInScene) {
+            updateSatellite(satelliteObject, earthPlanetObject, dt);
+          }
+        });
+      }
+    });
+  }
+
+  let stats = new Stats();
+  stats.showPanel(0);
+
+  const ui_data = {
+    addEarth: function() {
+      addObject(OBJECT_TYPE_EARTH);
+    },
+
+    addSatellite: function() {
+      addObject(OBJECT_TYPE_SATELLITE);
+    }
+  }
+
+  let gui = new GUI();
+  gui.add(ui_data, 'addEarth').name("Add Earth");
+  gui.add(ui_data, 'addSatellite').name("Add Satellite");
+
+  let simulationObjectsFolder = gui.addFolder("Simulation Objects");
+
+  let scene = new THREE.Scene();
+  scene.name = "Scene";
+
+  let renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+
+  let camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 0, (EARTH_RADIUS * 3) / VISUAL_SCALE);
+  camera.lookAt(0, 0, 0);
+
+  let light = new THREE.AmbientLight(0xFFFFFF);
+  light.name = "AmbientLight";
+
+  let clock = new THREE.Clock();
+
+  const earthTemplateObject = new SimulationObject("EarthTemplate", OBJECT_TYPE_EARTH);
+  earthTemplateObject.setScale(0.5, 0.5, 0.5);
+  earthTemplateObject.mass = EARTH_MASS;
+
+  const satelliteTemplateObject = new SimulationObject("SatelliteTemplate", OBJECT_TYPE_SATELLITE);
+  satelliteTemplateObject.setScale(2, 2, 2);
+  satelliteTemplateObject.setPosition(EARTH_RADIUS + INIT_ALTITUDE, 0, 0);
+  satelliteTemplateObject.mass = SATELLITE_MASS;
+
+  document.body.appendChild(stats.dom);
+  document.body.appendChild(renderer.domElement);
+  scene.add(light);
+
+  let controls = new FlyControls(camera, renderer.domElement);
+  controls.movementSpeed = 5;
+  controls.rollSpeed = 0.01;
+
+  const orbitalVelocity = Math.sqrt(G * EARTH_MASS / (EARTH_RADIUS + INIT_ALTITUDE));
+  earthTemplateObject.velocity.set(0, orbitalVelocity, 0);
+
+  async function loadAssets() {
+    /**
+      * Skybox Generator:
+      * 
+      * https://tools.wwwtyro.net/space-3d/index.html
+      */
+    const skyboxLoader = new THREE.CubeTextureLoader();
+
+    return new Promise((resolve, reject) => {
+      skyboxLoader.load(
+        [
+          /* positive-x (right), negative-x (left) */
+          'assets/textures/skybox/right.png',
+          'assets/textures/skybox/left.png',
+
+          /* positive-y (top), negative-y (bottom) */
+          'assets/textures/skybox/top.png',
+          'assets/textures/skybox/bottom.png',
+
+          /* positive-z (front), negative-z (back) */
+          'assets/textures/skybox/front.png',
+          'assets/textures/skybox/back.png',
+        ],
+        function (skyboxTexture) {
+          scene.background = skyboxTexture;
+          resolve();
+        },
+        function (loadProgress) {
+          /* (debug) */
+          console.log('loading skybox (%' + (loadProgress.loaded / loadProgress.total * 100) + ')');
+        },
+        function (error) {
+          console.error('failed to load skybox');
+          console.error(error);
+          reject();
+        }
+      );
+    })
+      .then((result) => { return earthTemplateObject.loadModel("assets/models/Earth.glb"); })
+      .then((result) => { return satelliteTemplateObject.loadModel("assets/models/Satellite2.glb"); })
+      .catch((error) => console.error(error));
+  }
+
+  /* TODO add focus and ability to control the objects (after implementing UI) */
+  function addObject(type) {
+    let pushedObject = null;
+
+    if (type === OBJECT_TYPE_EARTH) {
+      simulationObjects.earthPlanets.push(earthTemplateObject.clone());
+
+      pushedObject = simulationObjects.earthPlanets.at(-1);
+      pushedObject.name = "Earth" + pushedObject.id;
+
+      /* (debug) */
+      console.log(pushedObject);
+    } else if (type === OBJECT_TYPE_SATELLITE) {
+      simulationObjects.satellites.push(satelliteTemplateObject.clone());
+
+      pushedObject = simulationObjects.satellites.at(-1);
+      pushedObject.name = "Satellite" + pushedObject.id;
+
+      /* (debug) */
+      console.log(pushedObject);
+    }
+
+    /* TODO make a choice to delete the object if wanted (from it's folder) */
+    pushedObject.addToScene(scene);
+
+    /* TODO implement UI functions */
+    let pushedObjectFolder = simulationObjectsFolder.addFolder(pushedObject.name + " (ID : " + pushedObject.id + ")");
+
+    /* TODO this has to do with addition/deletion of objects */
+    pushedObjectFolder.add(pushedObject, 'isInScene').name("");
+
+    /* TODO modify SimulationObject to add ability to control forces (modify, enable, disable) */
+    pushedObjectFolder.add(pushedObject, 'mass').name("Mass (kg)");
+    
+    let pushedObjectPositionFolder = pushedObjectFolder.addFolder("Position");
+    pushedObjectPositionFolder.add(pushedObject.position, 'x').name("X").onChange(function() {});
+    pushedObjectPositionFolder.add(pushedObject.position, 'y').name("Y").onChange(function() {});
+    pushedObjectPositionFolder.add(pushedObject.position, 'z').name("Z").onChange(function() {});
+
+    let pushedObjectRotationFolder = pushedObjectFolder.addFolder("Rotation");
+    pushedObjectRotationFolder.add(pushedObject.rotation, 'x').name("X").onChange(function() {});
+    pushedObjectRotationFolder.add(pushedObject.rotation, 'y').name("Y").onChange(function() {});
+    pushedObjectRotationFolder.add(pushedObject.rotation, 'z').name("Z").onChange(function() {});
+
+    let pushedObjectScaleFolder = pushedObjectFolder.addFolder("Scale");
+    pushedObjectScaleFolder.add(pushedObject.scale, 'x').name("X").onChange(function() {});
+    pushedObjectScaleFolder.add(pushedObject.scale, 'y').name("Y").onChange(function() {});
+    pushedObjectScaleFolder.add(pushedObject.scale, 'z').name("Z").onChange(function() {});
   }
 
   function update() {
     requestAnimationFrame(update);
-    const dt = Math.min(clock.getDelta(), 0.1); /* control (cap) delta time */
+    const dt = Math.min(clock.getDelta(), 0.1) * TIME_STEP; /* control (cap) delta time */
     updateObjects(dt);
     controls.update(dt);
     renderer.render(scene, camera);
@@ -299,5 +427,9 @@ class Object {
     renderer.setSize(width, height);
   };
 
-  window.requestAnimationFrame(update);
+  loadAssets().then((result) => {
+    window.requestAnimationFrame(update);
+  }).catch((error) => {
+    console.error("Failed to launch project: \n" + error);
+  });
 })();
