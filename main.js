@@ -10,7 +10,7 @@
  * 
  * TODO
  * 
- * 1. fix cloning
+ * 1. fix cloning (remove doesn't work + add focus on selected object? + ability to customize air drag for each object)
  * 2. fix objects movement (weirdo satellite problem)
  * 3. implement rest of UI
  * 4. cleanup code
@@ -38,7 +38,7 @@ const G = 6.67430e-11,
   /* for atmosphere */
   AIR_DENSITY_SEA_LEVEL = 1.225, /* in kg/m^3 */
   SCALE_HEIGHT = 8500, /* in metres (m) */
-  
+
   OBJECT_TYPE_NONE = 0,
   OBJECT_TYPE_EARTH = 1,
   OBJECT_TYPE_SATELLITE = 2;
@@ -57,7 +57,7 @@ class SimulationObject {
   isInScene = false;
   enableForces = true;
   enableGravity = true;
-  enableAirDrag = true;
+
   model = null;
   name = "(unnamed)";
   type = OBJECT_TYPE_NONE;
@@ -68,6 +68,17 @@ class SimulationObject {
   constructor(name = "", type = 0) {
     this.name = name || `SimulationObject${this.id}`;
     this.type = type;
+    
+    if (this.type == OBJECT_TYPE_SATELLITE) {
+      this.enableAirDrag = true;
+
+      this.airDragCustomPreferences = {
+        dragCoefficient: 2.2,
+        crossSectionArea: 10,
+        airDensitySeaLevel: AIR_DENSITY_SEA_LEVEL,
+        scaleHeight: SCALE_HEIGHT
+      };
+    }
   }
 
   async loadModel(src) {
@@ -109,16 +120,6 @@ class SimulationObject {
     }
   }
 
-  /*
-  toggleExistenceInScene(scene) {
-    if (!this.isInScene) {
-      this.addToScene(scene);
-    } else {
-      this.removeFromScene(scene);
-    }
-  }
-    */
-
   updatePhysics(dt, acceleration) {
     if (!this.enableForces) return;
 
@@ -152,7 +153,6 @@ class SimulationObject {
       this.model.scale.copy(this.scale);
   }
 
-  /* TODO can this function implemented in better way? */
   clone() {
     let clonedObj = new SimulationObject(this.name, this.type);
 
@@ -162,13 +162,23 @@ class SimulationObject {
     clonedObj.velocity.copy(this.velocity);
     clonedObj.previousAcceleration.copy(this.previousAcceleration);
     clonedObj.mass = this.mass;
-    clonedObj.model = this.model;
+    clonedObj.model = this.model.clone();
     clonedObj.model.position.copy(this.model.position);
     clonedObj.model.rotation.copy(this.model.rotation);
     clonedObj.model.scale.copy(this.model.scale);
     clonedObj.isModelLoaded = this.isModelLoaded;
     clonedObj.isInScene = this.isInScene;
     clonedObj.enableForces = this.enableForces;
+
+    if (clonedObj.type == OBJECT_TYPE_SATELLITE) {
+      clonedObj.enableAirDrag = this.enableAirDrag;
+      clonedObj.airDragCustomPreferences = {
+        dragCoefficient: this.airDragCustomPreferences.dragCoefficient,
+        crossSectionArea: this.airDragCustomPreferences.crossSectionArea,
+        airDensitySeaLevel: this.airDragCustomPreferences.airDensitySeaLevel,
+        scaleHeight: this.airDragCustomPreferences.scaleHeight
+      };
+    }
 
     return clonedObj;
   }
@@ -179,7 +189,6 @@ class SimulationObject {
     earthPlanets: [],
     satellites: []
   };
-
 
   /* [DEBUG] used to dumb childrens of the loaded model */
   function dumpObject(obj, lines = [], isLast = true, prefix = '') {
@@ -201,12 +210,12 @@ class SimulationObject {
     if (altitude < 0) return new THREE.Vector3(0, 0, 0);
 
     let dragCoefficient = ((options !== null && typeof options.dragCoefficient === "number") ? options.dragCoefficient : 2.2),
-        crossSectionArea = ((options !== null && typeof options.crossSectionArea === "number") ? options.crossSectionArea : 10),
-        airDensitySeaLevel = ((options !== null && typeof options.airDensitySeaLevel === "number") ? options.airDensitySeaLevel : AIR_DENSITY_SEA_LEVEL),
-        scaleHeight = ((options !== null && typeof options.scaleHeight === "number") ? options.scaleHeight : SCALE_HEIGHT);
+      crossSectionArea = ((options !== null && typeof options.crossSectionArea === "number") ? options.crossSectionArea : 10),
+      airDensitySeaLevel = ((options !== null && typeof options.airDensitySeaLevel === "number") ? options.airDensitySeaLevel : AIR_DENSITY_SEA_LEVEL),
+      scaleHeight = ((options !== null && typeof options.scaleHeight === "number") ? options.scaleHeight : SCALE_HEIGHT);
 
     const airDensity = airDensitySeaLevel * Math.exp(-altitude / scaleHeight),
-          speed = satObj.velocity.length();
+      speed = satObj.velocity.length();
 
     if (speed === 0) return new THREE.Vector3(0, 0, 0);
 
@@ -235,15 +244,16 @@ class SimulationObject {
 
   /* we would apply gravity and air drag forces on the satellite */
   function updateSatellite(satObj, earthObj, dt) {
-    let gravity = (satObj.enableGravity ? calculateGravity(earthObj, satObj) : THREE.Vector3(0));
-    let airDrag = (satObj.enableAirDrag ? calculateAirDrag(satObj) : THREE.Vector3(0));
-    
+    let gravity = (satObj.enableGravity ? calculateGravity(earthObj, satObj) : new THREE.Vector3(0, 0, 0)),
+      airDrag = (satObj.enableAirDrag ? calculateAirDrag(satObj, satObj.airDragCustomPreferences) : new THREE.Vector3(0, 0, 0));
+
     const totalForce = gravity.add(airDrag);
     const acceleration = totalForce.divideScalar(satObj.mass);
 
     satObj.updatePhysics(dt, acceleration);
 
     // Orient satellite to velocity
+    /* TODO satellite orbiting problems has to do with this? */
     if (satObj.model && satObj.velocity.lengthSq() > 0.1) {
       const currentPos = satObj.position.clone().divideScalar(VISUAL_SCALE);
       const velocityDir = satObj.velocity.clone().normalize();
@@ -263,7 +273,12 @@ class SimulationObject {
     }
   }
 
-  /* TODO better fix nested-loop design by linking satellites with planets? */
+  /**
+   * TODO better fix nested-loop design by linking satellites with planets?
+   * 
+   * Solution: we can prevent making more than one Earth planet, Ideal right?
+   * 
+   * */
   function updateObjects(dt) {
     simulationObjects.earthPlanets.forEach(earthPlanetObject => {
       if (earthPlanetObject.isInScene) {
@@ -279,23 +294,23 @@ class SimulationObject {
   }
 
   let stats = new Stats();
-  stats.dom.style.position = "fixed";
+  //stats.dom.style.position = "fixed";
   stats.dom.style.transform = "scale(1.5)";
   stats.dom.style.transformOrigin = "top left"; /* scale from origin */
   stats.showPanel(0);
 
   const ui_data = {
-    addEarth: function() {
+    addEarth: function () {
       addObject(OBJECT_TYPE_EARTH);
     },
 
-    addSatellite: function() {
+    addSatellite: function () {
       addObject(OBJECT_TYPE_SATELLITE);
     }
   }
 
   let gui = new GUI();
-  gui.domElement.style.position = "fixed";
+  //gui.domElement.style.position = "fixed";
   gui.domElement.style.transform = "scale(1.5)";
   gui.domElement.style.transformOrigin = "top right"; /* scale from origin */
 
@@ -310,7 +325,7 @@ class SimulationObject {
   let renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  
+
   let camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 0, (EARTH_RADIUS * 3) / VISUAL_SCALE);
   camera.lookAt(0, 0, 0);
@@ -323,14 +338,14 @@ class SimulationObject {
   const earthTemplateObject = new SimulationObject("EarthTemplate", OBJECT_TYPE_EARTH);
   earthTemplateObject.setScale(0.5, 0.5, 0.5);
   earthTemplateObject.mass = EARTH_MASS;
-  
+
   /* TODO smth wrong with initial settings of satellite? (need to figure out that to fix movement) */
 
   const satelliteTemplateObject = new SimulationObject("SatelliteTemplate", OBJECT_TYPE_SATELLITE);
   satelliteTemplateObject.setScale(2, 2, 2);
   satelliteTemplateObject.setPosition(EARTH_RADIUS + INIT_ALTITUDE, 0, 0);
   satelliteTemplateObject.mass = SATELLITE_MASS;
-  
+
   const orbitalVelocity = Math.sqrt(G * EARTH_MASS / (EARTH_RADIUS + INIT_ALTITUDE));
   satelliteTemplateObject.velocity.set(0, orbitalVelocity, 0);
 
@@ -380,9 +395,9 @@ class SimulationObject {
         }
       );
     })
-    .then((result) => { return earthTemplateObject.loadModel("assets/models/Earth.glb"); })
-    .then((result) => { return satelliteTemplateObject.loadModel("assets/models/Satellite2.glb"); })
-    .catch((error) => console.error(error));
+      .then((result) => { return earthTemplateObject.loadModel("assets/models/Earth.glb"); })
+      .then((result) => { return satelliteTemplateObject.loadModel("assets/models/Satellite2.glb"); })
+      .catch((error) => console.error(error));
   }
 
   /* TODO fix cloning and implement rest of UI */
@@ -394,49 +409,36 @@ class SimulationObject {
 
       pushedObject = simulationObjects.earthPlanets.at(-1);
       pushedObject.name = "Earth" + pushedObject.id;
-
-      /* (debug) */
-      console.log(pushedObject);
     } else if (type === OBJECT_TYPE_SATELLITE) {
       simulationObjects.satellites.push(satelliteTemplateObject.clone());
 
       pushedObject = simulationObjects.satellites.at(-1);
       pushedObject.name = "Satellite" + pushedObject.id;
-
-      /* (debug) */
-      console.log(pushedObject);
     }
 
-    /* P.S bad ternary op usage? (it's fine though) */
-    if (pushedObject === null) {
-      console.error(
-        "failed to push a new " +
-        ((type === OBJECT_TYPE_EARTH)
-        ? "Earth"
-        : ((type === OBJECT_TYPE_SATELLITE) ? "Satellite" : "None"))
-      );
-    }
+    pushedObject.model.name = pushedObject.name;
 
     /* TODO fix cloning and make a choice to delete the object if wanted (from it's folder) */
     pushedObject.addToScene(scene);
-    
+    console.log(dumpObject(scene));
+
     let pushedObjectFolder = simulationObjectsFolder.addFolder(pushedObject.name + " (ID : " + pushedObject.id + ")");
 
-    /* TODO fix cloning */
+    /* TODO fix cloning (remove doesn't work, add focus) */
     pushedObjectFolder
       .add(pushedObject, 'isInScene')
       .name("In Scene")
-      .onChange(function(value) {
-        console.log(scene);
-        dumpObject(scene);
+      .onChange(function (value) {
+        //console.log(scene);
+        //console.log(dumpObject(scene));
 
-        if (value === true) {
+        if (value) {
           pushedObject.addToScene(scene);
         } else {
           pushedObject.removeFromScene(scene);
         }
       });
-      
+
     let pushedObjectPhysics = pushedObjectFolder.addFolder("Physics");
 
     pushedObjectPhysics.add(pushedObject, 'mass').name("Mass (kg)");
@@ -446,31 +448,36 @@ class SimulationObject {
       let gravityForce = pushedObjectPhysics.addFolder("Gravity");
       gravityForce.add(pushedObject, 'enableGravity').name("Enable");
 
-      /* TODO add ability to modify air drag force properties */
       let airDragForce = pushedObjectPhysics.addFolder("Air Drag");
       airDragForce.add(pushedObject, 'enableAirDrag').name("Enable");
+
+      /* TODO we would control air drag for each satellite separately, so better fix that... */
+      airDragForce.add(pushedObject.airDragCustomPreferences, 'dragCoefficient').name("Drag Coefficient (Cd)");
+      airDragForce.add(pushedObject.airDragCustomPreferences, 'crossSectionArea').name("Cross Sectional Area");
+      airDragForce.add(pushedObject.airDragCustomPreferences, 'airDensitySeaLevel').name("Initial Air Density");
+      airDragForce.add(pushedObject.airDragCustomPreferences, 'scaleHeight').name("Scale Height");
     }
-    
+
     let pushedObjectPositionFolder = pushedObjectFolder.addFolder("Position");
-    
+
     pushedObjectPositionFolder
       .add(pushedObject.position, 'x')
       .name("X")
-      .onChange(function(newPosX) {
+      .onChange(function (newPosX) {
         pushedObject.setPosition(newPosX, pushedObject.position.y, pushedObject.position.z);
       });
-    
+
     pushedObjectPositionFolder
       .add(pushedObject.position, 'y')
       .name("Y")
-      .onChange(function(newPosY) {
+      .onChange(function (newPosY) {
         pushedObject.setPosition(pushedObject.position.x, newPosY, pushedObject.position.z);
       });
 
     pushedObjectPositionFolder
       .add(pushedObject.position, 'z')
       .name("Z")
-      .onChange(function(newPosZ) {
+      .onChange(function (newPosZ) {
         pushedObject.setPosition(pushedObject.position.x, pushedObject.position.x, newPosZ);
       });
 
@@ -487,21 +494,21 @@ class SimulationObject {
     pushedObjectScaleFolder
       .add(pushedObject.scale, 'x')
       .name("X")
-      .onChange(function(newScaleX) {
+      .onChange(function (newScaleX) {
         pushedObject.setScale(newScaleX, pushedObject.scale.y, pushedObject.scale.z);
       });
 
     pushedObjectScaleFolder
       .add(pushedObject.scale, 'y')
       .name("Y")
-      .onChange(function(newScaleY) {
+      .onChange(function (newScaleY) {
         pushedObject.setScale(pushedObject.scale.x, newScaleY, pushedObject.scale.z);
       });
-    
+
     pushedObjectScaleFolder
       .add(pushedObject.scale, 'z')
       .name("Z")
-      .onChange(function(newScaleZ) {
+      .onChange(function (newScaleZ) {
         pushedObject.setScale(pushedObject.scale.x, pushedObject.scale.y, newScaleZ);
       });
   }
@@ -515,16 +522,16 @@ class SimulationObject {
     stats.update();
   }
 
-  window.onresize = function() {
+  window.onresize = function () {
     const width = window.innerWidth, height = window.innerHeight;
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
   };
 
-  loadAssets().then(function(result) {
+  loadAssets().then(function (result) {
     window.requestAnimationFrame(update);
-  }).catch(function(error) {
+  }).catch(function (error) {
     console.error("Failed to launch project: \n" + error);
   });
 })();
