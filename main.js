@@ -38,20 +38,12 @@ const G = 6.67430e-11,
   /* for atmosphere */
   AIR_DENSITY_SEA_LEVEL = 1.225, /* in kg/m^3 */
   SCALE_HEIGHT = 8500, /* in metres (m) */
-
-
-  simulationObjectTypes = ["None", "Earth", "Satellite"],
+  
   OBJECT_TYPE_NONE = 0,
   OBJECT_TYPE_EARTH = 1,
   OBJECT_TYPE_SATELLITE = 2;
 
-let simulationObjects = {
-  earthPlanets: [],
-  satellites: []
-};
-
 /* ===== SimulationObject ===== */
-
 
 /* TODO link satellites with earth planets? */
 class SimulationObject {
@@ -183,6 +175,12 @@ class SimulationObject {
 }
 
 ; (function () {
+  let simulationObjects = {
+    earthPlanets: [],
+    satellites: []
+  };
+
+
   /* [DEBUG] used to dumb childrens of the loaded model */
   function dumpObject(obj, lines = [], isLast = true, prefix = '') {
     const localPrefix = isLast ? '└─' : '├─';
@@ -281,6 +279,9 @@ class SimulationObject {
   }
 
   let stats = new Stats();
+  stats.dom.style.position = "fixed";
+  stats.dom.style.transform = "scale(1.5)";
+  stats.dom.style.transformOrigin = "top left"; /* scale from origin */
   stats.showPanel(0);
 
   const ui_data = {
@@ -294,6 +295,10 @@ class SimulationObject {
   }
 
   let gui = new GUI();
+  gui.domElement.style.position = "fixed";
+  gui.domElement.style.transform = "scale(1.5)";
+  gui.domElement.style.transformOrigin = "top right"; /* scale from origin */
+
   gui.add(ui_data, 'addEarth').name("Add Earth");
   gui.add(ui_data, 'addSatellite').name("Add Satellite");
 
@@ -303,9 +308,9 @@ class SimulationObject {
   scene.name = "Scene";
 
   let renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
-
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  
   let camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 0, (EARTH_RADIUS * 3) / VISUAL_SCALE);
   camera.lookAt(0, 0, 0);
@@ -325,6 +330,9 @@ class SimulationObject {
   satelliteTemplateObject.setScale(2, 2, 2);
   satelliteTemplateObject.setPosition(EARTH_RADIUS + INIT_ALTITUDE, 0, 0);
   satelliteTemplateObject.mass = SATELLITE_MASS;
+  
+  const orbitalVelocity = Math.sqrt(G * EARTH_MASS / (EARTH_RADIUS + INIT_ALTITUDE));
+  satelliteTemplateObject.velocity.set(0, orbitalVelocity, 0);
 
   document.body.appendChild(stats.dom);
   document.body.appendChild(renderer.domElement);
@@ -333,9 +341,6 @@ class SimulationObject {
   let controls = new FlyControls(camera, renderer.domElement);
   controls.movementSpeed = 5;
   controls.rollSpeed = 0.01;
-
-  const orbitalVelocity = Math.sqrt(G * EARTH_MASS / (EARTH_RADIUS + INIT_ALTITUDE));
-  earthTemplateObject.velocity.set(0, orbitalVelocity, 0);
 
   async function loadAssets() {
     /**
