@@ -10,11 +10,10 @@
  * 
  * TODO
  * 
- * 1. fix cloning (remove doesn't work + add focus on selected object? + ability to customize air drag for each object)
- * 2. fix objects movement (weirdo satellite problem)
- * 3. implement rest of UI
- * 4. cleanup code
- * 5. finalize any other steps
+ * 1. fix objects movement (weirdo satellite problem)
+ * 2. implement rest of UI
+ * 3. cleanup code
+ * 4. finalize any other steps
  */
 
 import * as THREE from 'three';
@@ -68,7 +67,7 @@ class SimulationObject {
   constructor(name = "", type = 0) {
     this.name = name || `SimulationObject${this.id}`;
     this.type = type;
-    
+
     if (this.type == OBJECT_TYPE_SATELLITE) {
       this.enableAirDrag = true;
 
@@ -107,15 +106,15 @@ class SimulationObject {
   }
 
   addToScene(scene) {
-    if (this.model && !this.isInScene) {
+    if (this.model !== null && this.isModelLoaded && !this.isInScene) {
       scene.add(this.model);
       this.isInScene = true;
     }
   }
 
   removeFromScene(scene) {
-    if (this.model && this.isInScene) {
-      scene.remove(this.model);
+    if (this.model !== null && this.isModelLoaded && this.isInScene) {
+      scene.remove(scene.getObjectByName(this.name));
       this.isInScene = false;
     }
   }
@@ -156,22 +155,21 @@ class SimulationObject {
   clone() {
     let clonedObj = new SimulationObject(this.name, this.type);
 
-    clonedObj.position.copy(this.position);
-    clonedObj.rotation.copy(this.rotation);
-    clonedObj.scale.copy(this.scale);
-    clonedObj.velocity.copy(this.velocity);
-    clonedObj.previousAcceleration.copy(this.previousAcceleration);
+    clonedObj.position = this.position.clone();
+    clonedObj.rotation = this.rotation.clone();
+    clonedObj.scale = this.scale.clone();
+    clonedObj.velocity = this.velocity.clone();
+    clonedObj.previousAcceleration = this.previousAcceleration.clone();
     clonedObj.mass = this.mass;
     clonedObj.model = this.model.clone();
-    clonedObj.model.position.copy(this.model.position);
-    clonedObj.model.rotation.copy(this.model.rotation);
-    clonedObj.model.scale.copy(this.model.scale);
     clonedObj.isModelLoaded = this.isModelLoaded;
     clonedObj.isInScene = this.isInScene;
     clonedObj.enableForces = this.enableForces;
+    clonedObj.enableGravity = this.enableGravity;
 
     if (clonedObj.type == OBJECT_TYPE_SATELLITE) {
       clonedObj.enableAirDrag = this.enableAirDrag;
+
       clonedObj.airDragCustomPreferences = {
         dragCoefficient: this.airDragCustomPreferences.dragCoefficient,
         crossSectionArea: this.airDragCustomPreferences.crossSectionArea,
@@ -342,7 +340,7 @@ class SimulationObject {
   /* TODO smth wrong with initial settings of satellite? (need to figure out that to fix movement) */
 
   const satelliteTemplateObject = new SimulationObject("SatelliteTemplate", OBJECT_TYPE_SATELLITE);
-  satelliteTemplateObject.setScale(2, 2, 2);
+  satelliteTemplateObject.setScale(1, 1, 1);
   satelliteTemplateObject.setPosition(EARTH_RADIUS + INIT_ALTITUDE, 0, 0);
   satelliteTemplateObject.mass = SATELLITE_MASS;
 
@@ -400,7 +398,7 @@ class SimulationObject {
       .catch((error) => console.error(error));
   }
 
-  /* TODO fix cloning and implement rest of UI */
+  /* TODO implement rest of UI */
   function addObject(type) {
     let pushedObject = null;
 
@@ -409,34 +407,74 @@ class SimulationObject {
 
       pushedObject = simulationObjects.earthPlanets.at(-1);
       pushedObject.name = "Earth" + pushedObject.id;
+      console.log(simulationObjects.earthPlanets);
     } else if (type === OBJECT_TYPE_SATELLITE) {
       simulationObjects.satellites.push(satelliteTemplateObject.clone());
 
       pushedObject = simulationObjects.satellites.at(-1);
       pushedObject.name = "Satellite" + pushedObject.id;
+      console.log(simulationObjects.satellites);
     }
 
     pushedObject.model.name = pushedObject.name;
 
-    /* TODO fix cloning and make a choice to delete the object if wanted (from it's folder) */
     pushedObject.addToScene(scene);
     console.log(dumpObject(scene));
 
     let pushedObjectFolder = simulationObjectsFolder.addFolder(pushedObject.name + " (ID : " + pushedObject.id + ")");
 
-    /* TODO fix cloning (remove doesn't work, add focus) */
+    let generalPushedObjectUI = {
+      deletePushedObject: function () {
+        let objName = pushedObject.name;
+
+        pushedObject.removeFromScene(scene);
+        pushedObjectFolder.destroy();
+
+        console.log(dumpObject(scene));
+
+        /* TODO refactor this part... */
+
+        if (pushedObject.type == OBJECT_TYPE_SATELLITE) {
+          let idx = 0, objFound = false;
+
+          for (; idx < simulationObjects.satellites.length - 1; idx += 1) {
+            if (simulationObjects.satellites[idx].name == objName) {
+              objFound = true;
+              break;
+            }
+          }
+
+          if (objFound) {
+            simulationObjects.satellites.splice(idx, 1);
+            console.log(simulationObjects.satellites);
+          }
+        } else if (pushedObject.type == OBJECT_TYPE_EARTH) {
+          let idx = 0, objFound = false;
+
+          for (; idx < simulationObjects.earthPlanets.length - 1; idx += 1) {
+            if (simulationObjects.earthPlanets[idx].name == objName) {
+              objFound = true;
+              break;
+            }
+          }
+
+          if (objFound) {
+            simulationObjects.earthPlanets.splice(idx, 1);
+            console.log(simulationObjects.earthPlanets);
+          }
+        }
+      }
+    };
+
+    pushedObjectFolder.add(generalPushedObjectUI, 'deletePushedObject').name("Delete");
+
+    /* TODO this checkbox sucks */
     pushedObjectFolder
       .add(pushedObject, 'isInScene')
       .name("In Scene")
       .onChange(function (value) {
-        //console.log(scene);
-        //console.log(dumpObject(scene));
-
-        if (value) {
-          pushedObject.addToScene(scene);
-        } else {
-          pushedObject.removeFromScene(scene);
-        }
+        ((value === true) ? pushedObject.addToScene(scene) : pushedObject.removeFromScene(scene));
+        console.log(dumpObject(scene));
       });
 
     let pushedObjectPhysics = pushedObjectFolder.addFolder("Physics");
@@ -451,7 +489,6 @@ class SimulationObject {
       let airDragForce = pushedObjectPhysics.addFolder("Air Drag");
       airDragForce.add(pushedObject, 'enableAirDrag').name("Enable");
 
-      /* TODO we would control air drag for each satellite separately, so better fix that... */
       airDragForce.add(pushedObject.airDragCustomPreferences, 'dragCoefficient').name("Drag Coefficient (Cd)");
       airDragForce.add(pushedObject.airDragCustomPreferences, 'crossSectionArea').name("Cross Sectional Area");
       airDragForce.add(pushedObject.airDragCustomPreferences, 'airDensitySeaLevel').name("Initial Air Density");
