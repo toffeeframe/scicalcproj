@@ -4,14 +4,13 @@
  * [x] Implement constants/imports
  * [x] Implement SpaceObject class
  * [x] Implement routines in IIFE
- * [o] Implement simulation logic (things are asynchronous?)
- * [o] Implement UI
+ * [x] Implement simulation logic (things are asynchronous?)
+ * [x] Implement UI
  * [o] Implement dynamic satellites (TODO fix movement)
  * 
  * TODO
  * 
  * 1. fix objects movement (weirdo satellite problem)
- * 2. implement rest of UI
  * 3. cleanup code
  * 4. finalize any other steps
  */
@@ -397,8 +396,7 @@ class SimulationObject {
       .then((result) => { return satelliteTemplateObject.loadModel("assets/models/Satellite2.glb"); })
       .catch((error) => console.error(error));
   }
-
-  /* TODO implement rest of UI */
+  
   function addObject(type) {
     let pushedObject = null;
 
@@ -432,34 +430,18 @@ class SimulationObject {
 
         console.log(dumpObject(scene));
 
-        /* TODO refactor this part... */
-
         if (pushedObject.type == OBJECT_TYPE_SATELLITE) {
-          let idx = 0, objFound = false;
+          let idx = simulationObjects.satellites.findIndex(satellite => satellite.name === objName);
 
-          for (; idx < simulationObjects.satellites.length - 1; idx += 1) {
-            if (simulationObjects.satellites[idx].name == objName) {
-              objFound = true;
-              break;
-            }
-          }
-
-          if (objFound) {
-            simulationObjects.satellites.splice(idx, 1);
+          if (idx !== -1) {
+            simulationObjects.satellites.splice(index, 1);
             console.log(simulationObjects.satellites);
           }
         } else if (pushedObject.type == OBJECT_TYPE_EARTH) {
-          let idx = 0, objFound = false;
-
-          for (; idx < simulationObjects.earthPlanets.length - 1; idx += 1) {
-            if (simulationObjects.earthPlanets[idx].name == objName) {
-              objFound = true;
-              break;
-            }
-          }
-
-          if (objFound) {
-            simulationObjects.earthPlanets.splice(idx, 1);
+          let idx = simulationObjects.earthPlanets.findIndex(earthPlanet => earthPlanet.name === objName);
+          
+          if (idx !== -1) {
+            simulationObjects.earthPlanets.splice(index, 1);
             console.log(simulationObjects.earthPlanets);
           }
         }
