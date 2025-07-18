@@ -11,6 +11,7 @@
  * TODO
  * 
  * 1. fix objects movement (weirdo satellite problem)
+ * 2. fix the weird checkbox (it doesn't remove object from scene)
  * 3. cleanup code
  * 4. finalize any other steps
  */
@@ -353,6 +354,7 @@ class SimulationObject {
   let controls = new FlyControls(camera, renderer.domElement);
   controls.movementSpeed = 5;
   controls.rollSpeed = 0.01;
+  controls.dragToLook = true;
 
   async function loadAssets() {
     /**
