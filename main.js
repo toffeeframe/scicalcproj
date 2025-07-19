@@ -44,7 +44,6 @@ const G = 6.67430e-11,
 
 /* ===== SimulationObject ===== */
 
-/* TODO link satellites with earth planets? */
 class SimulationObject {
   position = new THREE.Vector3(0, 0, 0);
   rotation = new THREE.Euler(0, 0, 0, 'XYZ');
@@ -184,7 +183,7 @@ class SimulationObject {
 
 ; (function () {
   let simulationObjects = {
-    earthPlanets: [],
+    earthPlanet: null,
     satellites: []
   };
 
@@ -271,35 +270,34 @@ class SimulationObject {
     }
   }
 
-  /**
-   * TODO better fix nested-loop design by linking satellites with planets?
-   * 
-   * Solution: we can prevent making more than one Earth planet, Ideal right?
-   * 
-   * */
+  /* only one earth planet is enough, right? */
   function updateObjects(dt) {
-    simulationObjects.earthPlanets.forEach(earthPlanetObject => {
-      if (earthPlanetObject.isInScene) {
-        updateEarth(earthPlanetObject, dt);
+    if (simulationObjects.earthPlanet !== null) {
+      if (simulationObjects.earthPlanet.isInScene) {
+        updateEarth(simulationObjects.earthPlanet, dt);
 
-        simulationObjects.satellites.forEach(satelliteObject => {
-          if (satelliteObject.isInScene) {
-            updateSatellite(satelliteObject, earthPlanetObject, dt);
+        simulationObjects.satellites.forEach(satellite => {
+          if (satellite.isInScene) {
+            updateSatellite(satellite, simulationObjects.earthPlanet, dt);
           }
         });
       }
-    });
+    }
   }
 
   let stats = new Stats();
   //stats.dom.style.position = "fixed";
-  stats.dom.style.transform = "scale(1.5)";
+  stats.dom.style.transform = "scale(1)";
   stats.dom.style.transformOrigin = "top left"; /* scale from origin */
   stats.showPanel(0);
 
   const ui_data = {
     addEarth: function () {
-      addObject(OBJECT_TYPE_EARTH);
+      if (simulationObjects.earthPlanet === null) {
+        addObject(OBJECT_TYPE_EARTH);
+      } else {
+        alert("Have you ever seen 2 earth planets in the space?!");
+      }
     },
 
     addSatellite: function () {
@@ -309,7 +307,7 @@ class SimulationObject {
 
   let gui = new GUI();
   //gui.domElement.style.position = "fixed";
-  gui.domElement.style.transform = "scale(1.5)";
+  gui.domElement.style.transform = "scale(1)";
   gui.domElement.style.transformOrigin = "top right"; /* scale from origin */
 
   gui.add(ui_data, 'addEarth').name("Add Earth");
@@ -403,49 +401,36 @@ class SimulationObject {
     let pushedObject = null;
 
     if (type === OBJECT_TYPE_EARTH) {
-      simulationObjects.earthPlanets.push(earthTemplateObject.clone());
-
-      pushedObject = simulationObjects.earthPlanets.at(-1);
-      pushedObject.name = "Earth" + pushedObject.id;
-      console.log(simulationObjects.earthPlanets);
+      if (simulationObjects.earthPlanet !== null) return;
+      simulationObjects.earthPlanet = earthTemplateObject.clone();
+      simulationObjects.earthPlanet.name = "Earth" + simulationObjects.earthPlanet.id;
+      pushedObject = simulationObjects.earthPlanet;
     } else if (type === OBJECT_TYPE_SATELLITE) {
       simulationObjects.satellites.push(satelliteTemplateObject.clone());
-
       pushedObject = simulationObjects.satellites.at(-1);
       pushedObject.name = "Satellite" + pushedObject.id;
-      console.log(simulationObjects.satellites);
     }
 
     pushedObject.model.name = pushedObject.name;
-
     pushedObject.addToScene(scene);
-    console.log(dumpObject(scene));
 
     let pushedObjectFolder = simulationObjectsFolder.addFolder(pushedObject.name + " (ID : " + pushedObject.id + ")");
 
     let generalPushedObjectUI = {
-      deletePushedObject: function () {
+      deletePushedObject: function() {
         let objName = pushedObject.name;
 
         pushedObject.removeFromScene(scene);
         pushedObjectFolder.destroy();
 
-        console.log(dumpObject(scene));
-
         if (pushedObject.type == OBJECT_TYPE_SATELLITE) {
           let idx = simulationObjects.satellites.findIndex(satellite => satellite.name === objName);
 
           if (idx !== -1) {
-            simulationObjects.satellites.splice(index, 1);
-            console.log(simulationObjects.satellites);
+            simulationObjects.satellites.splice(idx, 1);
           }
         } else if (pushedObject.type == OBJECT_TYPE_EARTH) {
-          let idx = simulationObjects.earthPlanets.findIndex(earthPlanet => earthPlanet.name === objName);
-          
-          if (idx !== -1) {
-            simulationObjects.earthPlanets.splice(index, 1);
-            console.log(simulationObjects.earthPlanets);
-          }
+          simulationObjects.earthPlanet = null;
         }
       }
     };
@@ -457,6 +442,7 @@ class SimulationObject {
       .add(pushedObject, 'isInScene')
       .name("In Scene")
       .onChange(function (value) {
+        console.log(pushedObject);
         ((value === true) ? pushedObject.addToScene(scene) : pushedObject.removeFromScene(scene));
         console.log(dumpObject(scene));
       });
@@ -481,6 +467,8 @@ class SimulationObject {
 
     let pushedObjectPositionFolder = pushedObjectFolder.addFolder("Position");
 
+    /* should we not rely on using a VISUAL_SCALE here? */
+
     pushedObjectPositionFolder
       .add(pushedObject.position, 'x')
       .name("X")
@@ -501,15 +489,7 @@ class SimulationObject {
       .onChange(function (newPosZ) {
         pushedObject.setPosition(pushedObject.position.x, pushedObject.position.x, newPosZ);
       });
-
-    /* we ain't implement this for now since we didn't provide a setRotation function for SimulationObject */
-    /*
-    let pushedObjectRotationFolder = pushedObjectFolder.addFolder("Rotation");
-    pushedObjectRotationFolder.add(pushedObject.rotation, 'x').name("X").onChange(function(newRotationX) {});
-    pushedObjectRotationFolder.add(pushedObject.rotation, 'y').name("Y").onChange(function(newRotationY) {});
-    pushedObjectRotationFolder.add(pushedObject.rotation, 'z').name("Z").onChange(function(newRotationZ) {});
-    */
-
+      
     let pushedObjectScaleFolder = pushedObjectFolder.addFolder("Scale");
 
     pushedObjectScaleFolder
@@ -536,6 +516,7 @@ class SimulationObject {
 
   function update() {
     requestAnimationFrame(update);
+    /* do we need to (cap) dt? */
     const dt = Math.min(clock.getDelta(), 0.1) * TIME_STEP; /* control (cap) delta time */
     updateObjects(dt);
     controls.update(dt);
